@@ -11,7 +11,6 @@ __pycache__/
 
 # Dependências do Poetry
 poetry.lock
-pyproject.toml
 
 # Banco de dados
 tarefas.db
