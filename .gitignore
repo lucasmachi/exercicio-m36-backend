@@ -1,0 +1,18 @@
+
+# Variáveis de ambiente
+.env
+
+# Pasta de testes na raiz
+/tests/
+
+# Cache do Python
+__pycache__/
+**/__pycache__/
+
+# Dependências do Poetry
+poetry.lock
+pyproject.toml
+
+# Banco de dados
+tarefas.db
+S
