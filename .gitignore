@@ -1,9 +1,5 @@
-
 # Variáveis de ambiente
 .env
-
-# Pasta de testes na raiz
-/tests/
 
 # Cache do Python
 __pycache__/
@@ -14,4 +10,3 @@ poetry.lock
 
 # Banco de dados
 tarefas.db
-S
