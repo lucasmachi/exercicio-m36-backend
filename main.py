@@ -12,6 +12,19 @@ from tasks import fatorial, somar
 from celery_app import celery_app
 from celery.result import AsyncResult
 from kafka_producer import enviar_evento
+import logging.config
+import yaml
+from elasticsearch import Elasticsearch
+from datetime import datetime
+
+
+es = Elasticsearch(hosts=["http://elasticsearch:9200"])
+with open("logging.yaml", "r") as f:
+    config = yaml.safe_load(f)
+    logging.config.dictConfig(config)
+
+logger = logging.getLogger(__name__)
+logger.info("API inicializada com sucesso")
 
 
 app = FastAPI(
@@ -42,6 +55,12 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 security = HTTPBasic()
 Base = declarative_base()
+
+#ESSA é uma config do elasticsearch, na prática em outras empresas provavelmente vão ser outras ferramentas
+
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_INDEX", "tarefas-logs")
+es_client = Elasticsearch([ELASTICSEARCH_URL])
 
 class TarefasDB(Base):
     __tablename__ = "tabela_tarefas"
@@ -145,6 +164,7 @@ def adicionar_tarefa(tarefa: Tarefa, db: Session = Depends(sessao_db), credentia
     return {"mensagem": "Tarefa adicionada com sucesso", "tarefa": nova_tarefa}
 
 
+
 @app.get("/tarefas")
 def listar_tarefa(
     page: int = 1,
@@ -153,21 +173,57 @@ def listar_tarefa(
     credentials: HTTPBasicCredentials = Depends(autenticar_usuario)
 ):
     if page < 1 or limit < 1:
-        raise HTTPException(status_code=400, detail="Página ou limite não podem ter valores menores que 1")
-    
-    tarefas_listadas = db.query(TarefasDB).offset((page - 1) * limit).limit(limit).all()
+        raise HTTPException(
+            status_code=400,
+            detail="Página ou limite não podem ter valores menores que 1"
+        )
 
-    if not tarefas_listadas:
-        return {"message": "Não existe nenhuma tarefa"}
+    tarefas_listadas = (
+        db.query(TarefasDB)
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
 
-    total_tarefas= db.query(TarefasDB).count()
+    total_tarefas = db.query(TarefasDB).count()
 
-    return {
+    response = {
         "page": page,
         "limit": limit,
         "total": total_tarefas,
-        "tarefas": [{"id": tarefa.id, "nome": tarefa.nome, "descricao": tarefa.descricao} for tarefa in tarefas_listadas]
+        "tarefas": [
+            {
+                "id": tarefa.id,
+                "nome": tarefa.nome,
+                "descricao": tarefa.descricao
+            }
+            for tarefa in tarefas_listadas
+        ]
     }
+
+    log = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "endpoint": "/tarefas",
+        "usuario": credentials.username,
+        "page": page,
+        "limit": limit,
+        "status": "success" if tarefas_listadas else "not_found",
+        "total_tarefas": total_tarefas
+    }
+
+    try:
+        es_client.index(
+            index=ELASTICSEARCH_INDEX,
+            document=log
+        )
+    except Exception:
+        logger.exception("Erro ao enviar log para o Elasticsearch")
+
+    if not tarefas_listadas:
+        response["message"] = "Não existe nenhuma tarefa"
+
+    return response
+
 
 
 @app.put("/atualiza/{id_tarefa}")
@@ -209,3 +265,8 @@ def deleta_tarefa(id_tarefa: int, db: Session = Depends(sessao_db), credentials:
 
 
     return {"message": "Tarefa deletada com sucesso!"}
+
+@app.get("/")
+def hello_world():
+    logger.info("Alguém acessou a raiz da API")
+    return {"Hello": "world!"}
