@@ -30,7 +30,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 
-redis_client = redis.Redis(host='REDIS_HOST', port='redis_port', db=0, decode_responses=True)
+
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=int(REDIS_PORT),
+    db=0,
+    decode_responses=True
+)
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -71,23 +77,36 @@ def autenticar_usuario(credentials: HTTPBasicCredentials = Depends(security)):
 
 #criando duas rotas post calcular soma e fatorial
 
+
 @app.post("/calcular/soma")
 def calcular_soma(a: int, b: int):
-    tarefa = somar.delay(a,b)
+    tarefa = somar.delay(a, b)
+
+    redis_client.lpush("tarefas_ids", tarefa.id)
+    redis_client.ltrim("tarefas_ids", 0, 49)
+
     return {
-        'task_id': tarefa.id,
-        'message': "Tarefa de soma enviada para execução"
+        "task_id": tarefa.id,
+        "message": "Tarefa de soma enviada para execução"
     }
+
+
 
 @app.post("/calcular/fatorial")
 def calcular_fatorial(n: int):
     tarefa = fatorial.delay(n)
+
+    redis_client.lpush("tarefas_ids", tarefa.id)
+    redis_client.ltrim("tarefas_ids", 0, 49)
+
     return {
-        'task_id': tarefa.id,
-        'message': "Tarefa de fatorial enviada para execução"
+        "task_id": tarefa.id,
+        "message": "Tarefa de fatorial enviada para execução"
     }
 
+
 #criando endpoint pra ver as tarefas na fila
+
 @app.get("/tarefas/recentes")
 def listar_tarefas_recentes():
     ids = redis_client.lrange("tarefas_ids", 0, -1)
@@ -95,14 +114,15 @@ def listar_tarefas_recentes():
 
     for task_id in ids:
         resultado = AsyncResult(task_id, app=celery_app)
-        tarefas.append(
+
+        tarefas.append({
             "task_id": task_id,
             "status": resultado.status,
             "resultado": resultado.result if resultado.successful() else None
-        )
-    return {
-        "tarefas": tarefas
-    }
+        })
+
+    return {"tarefas": tarefas}
+
 
 
 
