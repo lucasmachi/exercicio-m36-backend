@@ -1,3 +1,4 @@
+
 name: Python application
 
 on:
@@ -9,24 +10,104 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE_NAME: fastapi-tarefas
+  IMAGE_TAG: latest
+  CONTAINER_NAME: fastapi-tarefas-ci
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      DATABASE_URL: sqlite:///./ci.db
+      MEU_USUARIO: ci-user
+      MINHA_SENHA: ci-password
+      ELASTICSEARCH_URL: http://localhost:9200
+      ELASTICSEARCH_INDEX: tarefas-logs
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install Poetry
+      - name: Instalar Poetry
         run: pip install poetry
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         run: poetry install --no-root --no-interaction
 
-      - name: Run tests
+      - name: Rodar testes pytest
         run: poetry run pytest
+
+      - name: Configurar imagem docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build imagem Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker container
+        run: |
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            -p 8000:8000 \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e MEU_USUARIO="$MEU_USUARIO" \
+            -e MINHA_SENHA="$MINHA_SENHA" \
+            -e ELASTICSEARCH_URL="$ELASTICSEARCH_URL" \
+            -e ELASTICSEARCH_INDEX="$ELASTICSEARCH_INDEX" \
+            "$IMAGE_NAME:$IMAGE_TAG"
+
+      - name: Smoke test
+        run: |
+          response=""
+
+          for attempt in $(seq 1 30); do
+            if response=$(curl -fsS http://localhost:8000/ 2>/dev/null); then
+              break
+            fi
+
+            if ! docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" | grep -q true; then
+              echo "Container encerrou inesperadamente!"
+              docker logs "$CONTAINER_NAME"
+              exit 1
+            fi
+
+            echo "Aguardando a API iniciar... tentativa $attempt"
+            sleep 2
+          done
+
+          if [ -z "$response" ]; then
+            echo "A API nao respondeu dentro do tempo esperado"
+            docker logs "$CONTAINER_NAME"
+            exit 1
+          fi
+
+          echo "Resposta recebida: $response"
+
+          RESPONSE="$response" python -c '
+          import json
+          import os
+
+          data = json.loads(os.environ["RESPONSE"])
+
+          assert data == {"Hello": "world!"}, (
+              f"Resposta inesperada: {data}"
+          )
+
+          print("Smoke test concluído com sucesso")
+          '
+
+      - name: Limpar container
+        if: always()
+        run: docker rm -f "$CONTAINER_NAME" || true
