@@ -39,10 +39,9 @@ app = FastAPI(
 
 MEU_USUARIO = os.getenv("MEU_USUARIO")
 MINHA_SENHA =  os.getenv("MINHA_SENHA")
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tarefas.db")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-
 
 redis_client = redis.Redis(
     host=REDIS_HOST,
